@@ -12,12 +12,13 @@ function Get-ExecutableName {
 	[CmdletBinding()]
 	Param(
 		[Parameter(ValueFromPipeline=$True)]
-		[String]$Name
+		[String]$Name,
+		[Switch]$All
 	)
 	
 	Process {
 		$ret = where.exe $Name
-		If($ret -is [Object[]]) {
+		If(!$All -and $ret -is [Object[]]) {
 			$ret = $ret[0]
 		}
 		$ret
@@ -179,7 +180,7 @@ function Get-AllEnvironmentVariables {
 
 <#
 .SYNOPSIS
-	similar to refreshenv
+	similar to chocolatey's refreshenv but in pure powershell
 #>
 function Restore-EnvironmentVariables {
 	[CmdletBinding()]
@@ -189,27 +190,32 @@ function Restore-EnvironmentVariables {
 	Process {
 		("Machine", "User") | %{
 			$scope = $_
-			[Environment]::GetEnvironmentVariables($scope).GetEnumerator() | %{
+			[Environment]::GetEnvironmentVariables($scope).GetEnumerator() |
+				where Name -ne Path | %{
 				Set-Content "Env:\$($_.Name)" $_.Value
+				Write-Verbose "Env:\$($_.Name) = $($_.Value)"
 			}
 		}
-		Set-Content "Env:\Path" `
-			"$(Get-EnvironmentVariable Path Machine);$(Get-EnvironmentVariable Path User)"
+		# treat path specially
+		Restore-Path
 	}
 }
 
 <#
 .SYNOPSIS
+	Restores $PATH to the $PATH in the registry + the user $PATH
 #>
 function Restore-Path {
 	Process {
 		Set-Content "Env:\Path" `
 			"$(Get-EnvironmentVariable Path Machine);$(Get-EnvironmentVariable Path User)"
+		Write-Verbose "Env:\Path = $($env:Path)"
 	}
 }
 
 <#
 .SYNOPSIS
+	Gets $PATH as an array
 #>
 function Get-Path {
 	[CmdletBinding()]
@@ -225,6 +231,8 @@ function Get-Path {
 
 <#
 .SYNOPSIS
+	Adds a directory to $PATH in the selected scope; Machine-level (i.e. in
+	the registry) by default
 #>
 function Add-Path {
 	[CmdletBinding()]
@@ -239,4 +247,26 @@ function Add-Path {
 		Set-EnvironmentVariable Path "${env:Path};$Directory" -Scope $Scope
 		Restore-Path
 	}
+}
+
+<#
+.SYNOPSIS
+	Adds a Bash-style alias, i.e. proper partial application of arguments
+#>
+function New-BashAlias {
+	[CmdletBinding()]
+	Param (
+		[String]$Name,
+		[String]$Executable,
+		[Parameter(ValueFromRemainingArguments=$True)]
+		[String[]]$MoreArgs
+	)
+
+	$exe = Get-Command -CommandType Application `
+		-TotalCount 1 `
+		$Executable
+	$argString = $MoreArgs -join " "
+	return ("function $Name {" +
+		"`t`$input | & `"$($exe.Source)`" $argString `$args" +
+		" }")
 }
